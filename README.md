@@ -79,47 +79,33 @@ BatMUD 服务器 ──→ [Telnet 协商/MCCP 过滤] ──→ [按行解析]
 
 ## 快速开始
 
-### 环境要求
+### 方式一：直接运行 exe（推荐，无需安装 Python）
 
-- **Python 3.9+**
-- Windows / macOS / Linux
+1. 下载 `BatMUD-CN.exe`
+2. 访问 [百度翻译开放平台](https://fanyi-api.baidu.com/) 注册并开通 **「大模型文本翻译API」**（免费）
+3. 双击 `BatMUD-CN.exe`，首次运行会弹出配置界面输入 APP ID 和密钥
+4. 浏览器打开 `http://127.0.0.1:8080`
 
-### 1. 获取百度翻译 API 凭据
+之后每次只需双击 exe，凭据已保存无需重复输入。
 
-访问 [百度翻译开放平台](https://fanyi-api.baidu.com/)，注册并开通 **「大模型文本翻译API」** 服务（免费，每月 100 万字符额度）。在控制台获取你的 **APP ID** 和 **密钥**。
+### 方式二：从源码运行
 
-> ⚠️ 注意是「大模型文本翻译」不是「通用文本翻译」。只有大模型翻译才能保证游戏文本的翻译质量。
+**环境要求：** Python 3.9+（Windows / macOS / Linux）
 
-### 2. 启动
-
-**Windows:** 双击 `run.bat`
-
-**macOS / Linux / 命令行:**
+1. 获取百度翻译 API 凭据（同上）
+2. 双击 `run.bat`（Windows）或执行：
 
 ```bash
 pip install -r requirements.txt
 python -m src.main
 ```
 
-**首次运行**会自动弹出交互式配置界面，输入你的 APP ID 和密钥即可，凭据会保存到 `config.yaml`。之后再次启动直接跳过，无需重复输入。
+3. 首次运行输入凭据，之后自动跳过
+4. 浏览器打开 `http://127.0.0.1:8080`
 
-```
-=======================================================
-  首次运行 — 请配置百度大模型翻译 API 凭据
-=======================================================
-  开通地址: https://fanyi-api.baidu.com/
--------------------------------------------------------
-  APP ID: 20260613002631286
-  密钥 (Secret Key): JQgvMF3ipFGN5_pKeyYl
-  凭据已保存到 config.yaml
-=======================================================
-```
+### 连接游戏
 
-### 3. 连接游戏
-
-1. 浏览器打开 `http://127.0.0.1:8080`
-2. 页面自动连接游戏服务器
-3. 在底部输入框输入命令，回车发送
+浏览器打开后页面自动连接 BatMUD 服务器，在底部输入框输入命令，回车发送。
 
 ---
 
@@ -362,8 +348,18 @@ BatMUD_CN/
 
 ---
 
+## 自行构建 exe
+
+```bash
+pip install pyinstaller
+python -m PyInstaller --onefile --name BatMUD-CN --add-data "static;static" --hidden-import aiohttp --hidden-import yaml --clean --noconfirm run.py
+```
+
+构建完成后 `BatMUD-CN.exe` 出现在当前目录。
+
 ## 致谢
 
 - BatMUD — 1990 年上线至今的传奇 MUD 游戏
 - 百度翻译开放平台 — 大模型翻译 API
 - aiohttp — Python 异步 HTTP 框架
+- PyInstaller — Python 打包工具
