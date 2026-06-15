@@ -1,0 +1,5 @@
+# BatMUD CN 翻译代理 依赖
+# Python 3.9+
+
+aiohttp>=3.9.0
+pyyaml>=6.0

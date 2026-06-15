@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BatMUD CN</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div id="app">
+  <!-- 顶部状态栏 -->
+  <div id="status-bar">
+    <span id="status-indicator" class="status-connecting"></span>
+    <span id="status-text">正在连接...</span>
+    <span id="status-info"></span>
+  </div>
+
+  <!-- 终端显示区 -->
+  <div id="terminal" tabindex="0">
+    <div id="output"></div>
+  </div>
+
+  <!-- 输入行 -->
+  <div id="input-line">
+    <span id="input-prompt">&gt;</span>
+    <input type="text" id="cmd-input"
+           placeholder="输入命令..."
+           autocomplete="off"
+           autocorrect="off"
+           autocapitalize="off"
+           spellcheck="false">
+  </div>
+
+  <!-- 调试面板开关 -->
+  <button id="debug-toggle" title="切换调试面板">🐛</button>
+
+  <!-- 调试面板 -->
+  <div id="debug-panel" style="display:none">
+    <div id="debug-header">
+      <span>调试信息</span>
+      <button id="debug-clear">清空</button>
+    </div>
+    <div id="debug-output"></div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

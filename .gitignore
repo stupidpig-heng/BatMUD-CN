@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Runtime data (auto-generated)
+translation_cache.db
+translation_cache.db-journal
+
+# Logs
+*.log
+
+# Sensitive - keep your real keys out of git!
+# config.yaml is tracked but must have dummy values before commit
