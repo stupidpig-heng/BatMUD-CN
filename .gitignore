@@ -25,5 +25,10 @@ translation_cache.db-journal
 # Logs
 *.log
 
+# PyInstaller
+build/
+dist/
+*.spec
+
 # Sensitive - keep your real keys out of git!
 # config.yaml is tracked but must have dummy values before commit

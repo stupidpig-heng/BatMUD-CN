@@ -21,8 +21,12 @@ from .config_loader import Config
 
 logger = logging.getLogger("batmud.web")
 
-# 静态文件目录
-STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
+# 静态文件目录（兼容 PyInstaller 打包）
+import sys as _sys
+if getattr(_sys, 'frozen', False):
+    STATIC_DIR = Path(_sys._MEIPASS) / "static"
+else:
+    STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 
 # MIME 类型
 MIME = {
