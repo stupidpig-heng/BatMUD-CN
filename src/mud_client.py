@@ -195,6 +195,7 @@ class MudClient:
         self.parser = TextParser(min_chars=min_chars)
         self._running = False
         self._tasks: list[asyncio.Task] = []
+        self._pending_msg: Optional[ParsedLine] = None  # 跨 chunk 的未完成消息首行
 
     async def connect(self, host: str, port: int, timeout: float = 15):
         logger.info(f"Connecting to {host}:{port}...")
@@ -232,11 +233,16 @@ class MudClient:
                     logger.info("Server closed connection")
                     break
 
+                logger.info(f"[RAW_IN] len={len(data)}")
+                logger.info(f"[RAW_IN] hex={data.hex(' ')}")
+                logger.info(f"[RAW_IN] repr={repr(data)}")
+
                 filtered = self._filter_compress(data)
                 if not filtered:
                     continue
 
                 parsed = self.parser.feed(filtered)
+                parsed = self._merge_message_lines(parsed)
                 for line in parsed:
                     try:
                         await self._process_line(line)
@@ -289,14 +295,22 @@ class MudClient:
             segments = _split_raw_by_ansi(raw)
 
             # 2. 收集所有需要翻译的文本段（跳过 ≤2 字符的短指令如 i/s/n/eq）
+            #    也跳过字母占比 < 40% 的段 — 这些通常是 ASCII 地图/字符画
             text_indices = []   # (seg_index, text_str)
             for idx, (is_ansi, data) in enumerate(segments):
                 if not is_ansi:
                     text = data.decode('utf-8', errors='replace')
                     stripped = text.rstrip('\r\n')
-                    if (stripped and len(stripped.strip()) > 2
-                            and any(c.isascii() and c.isalpha() for c in stripped)):
-                        text_indices.append((idx, stripped))
+                    stripped_clean = stripped.strip()
+                    if not stripped_clean or len(stripped_clean) <= 2:
+                        continue
+                    alpha_count = sum(1 for c in stripped_clean if c.isascii() and c.isalpha())
+                    if alpha_count == 0:
+                        continue
+                    # 字母占比过低 → 地图字符画/分隔线，跳过翻译
+                    if alpha_count < len(stripped_clean) * 0.4:
+                        continue
+                    text_indices.append((idx, stripped))
 
             # 3. 逐段翻译（使用缓存）
             trans_map = {}
@@ -337,7 +351,11 @@ class MudClient:
 
                     if has_style and stripped.strip() and has_alpha and len(stripped.strip()) > 2:
                         # 有色文本(>2字符) → English(中文)
-                        out.extend(f'{stripped}({translated})'.encode('utf-8', errors='replace'))
+                        # 但若翻译结果与原文相同（未实际翻译/地图符号），只输出原文
+                        if stripped != translated:
+                            out.extend(f'{stripped}({translated})'.encode('utf-8', errors='replace'))
+                        else:
+                            out.extend(stripped.encode('utf-8', errors='replace'))
                     else:
                         # 默认色文本 → 只输出中文
                         out.extend(translated.encode('utf-8', errors='replace'))
@@ -347,15 +365,163 @@ class MudClient:
             html = ansi_to_html(bytes(out))
             debug['html'] = html
 
-        # 服务端控制台日志
-        if debug['ansi_count'] > 0:
-            mode = debug.get('mode', '?')
-            nseg = debug.get('segments', 0)
-            ntrans = debug.get('translated_segs', 0)
-            txt = (debug.get('text', '') or '')[:50]
-            logger.info(f"DEBUG [{mode}] ANSI:{debug['ansi_count']} segs:{nseg} trans:{ntrans} | {txt}")
-
         await self.on_output(html, debug)
+
+    @staticmethod
+    def _has_unbalanced_ansi(line: ParsedLine) -> bool:
+        """检测一行是否以未关闭的 ANSI 状态结尾（opener 多于 closer）"""
+        raw = line.raw_bytes
+        all_sgr = _SGR_CODE_RE.findall(raw)
+        if not all_sgr:
+            return False
+        closers = sum(1 for m in all_sgr if m == b'0' or m == b'')
+        openers = len(all_sgr) - closers
+        return openers > closers
+
+    @staticmethod
+    def _is_continuation_line(line: ParsedLine) -> bool:
+        """检测一行是否为续行（硬折行产生的缩进行或 ANSI 续行）"""
+        if line.is_telnet or line.is_prompt or line.is_gmcp:
+            return False
+        if line.skip_translation:
+            return False
+        raw = line.raw_bytes
+
+        # 模式1: 以空格缩进开头（频道消息续行）
+        if raw.startswith(b' '):
+            text = line.text.lstrip(' ')
+            return len(text) > 0 and any(c.isascii() and c.isalpha() for c in text)
+
+        # 模式2: 以 ANSI SGR 码 + 空格开头（NPC 对话续行）
+        m = _SGR_CODE_RE.match(raw)
+        if m and m.end() < len(raw) and raw[m.end():m.end()+1] == b' ':
+            after = raw[m.end():].lstrip(b' ')
+            return len(after) > 0
+
+        return False
+
+    def _merge_line_list(self, lines: list[ParsedLine]) -> ParsedLine:
+        """将多个 ParsedLine 合并为一个"""
+        if len(lines) == 1:
+            return lines[0]
+
+        # 合并 raw_bytes: 首行去尾 \r\n，续行去尾 \r\n，首字符非字母则去首空格，用空格连接
+        merged_raw = bytearray()
+        merged_raw.extend(lines[0].raw_bytes.rstrip(b'\r\n'))
+        for line in lines[1:]:
+            raw = line.raw_bytes
+            raw = raw.rstrip(b'\r\n')
+
+            # 去除 MUD 硬折行产生的 ANSI 断点：
+            # 首行尾 \x1b[0m + 续行首 \x1b[<SGR>m → 只保留空格连接，
+            # 避免翻译时句子被 ANSI 边界拆成两段独立翻译
+            if merged_raw.endswith(b'\x1b[0m'):
+                sgr_match = _SGR_CODE_RE.match(raw)
+                if sgr_match:
+                    merged_raw = merged_raw[:-len(b'\x1b[0m')]
+                    raw = raw[sgr_match.end():]
+
+            # 如果续行以空格开头（缩进续行），去掉缩进空格
+            if raw.startswith(b' '):
+                raw = raw.lstrip(b' ')
+            merged_raw.extend(b' ')
+            merged_raw.extend(raw)
+        merged_raw.extend(b'\r\n')
+
+        # 用临时 parser 重解析（避免干扰主 parser 的内部缓冲状态）
+        temp_parser = TextParser(min_chars=self.min_chars)
+        parsed_list = temp_parser.feed(bytes(merged_raw))
+        if parsed_list:
+            merged = parsed_list[0]
+            merged.is_prompt = False
+            merged.is_gmcp = False
+            merged.is_telnet = False
+            return merged
+        # 极低概率 fallback：手动构造
+        merged_text = ' '.join(l.text.strip() for l in lines)
+        return ParsedLine(
+            text=merged_text,
+            raw_bytes=bytes(merged_raw),
+            skip_translation=False,
+        )
+
+    def _merge_message_lines(self, lines: list[ParsedLine]) -> list[ParsedLine]:
+        """合并 MUD 服务端硬折行产生的续行
+
+        两类触发条件：
+        1. 上一行 ANSI 状态未平衡（opener 多于 closer）
+        2. 当前行匹配续行模式（缩进空格 / ANSI+空格开头）
+        """
+        if not lines:
+            return lines
+
+        # 跨 chunk：把上一轮缓冲的行前置
+        if self._pending_msg is not None:
+            lines.insert(0, self._pending_msg)
+            self._pending_msg = None
+
+        result = []
+        idx = 0
+        n = len(lines)
+
+        while idx < n:
+            line = lines[idx]
+
+            if line.is_telnet:
+                result.append(line)
+                idx += 1
+                continue
+
+            # 跳过不应合并的行
+            if line.is_prompt or line.is_gmcp:
+                result.append(line)
+                idx += 1
+                continue
+
+            # 开始一个合并组
+            group = [line]
+            idx += 1
+
+            while idx < n:
+                nxt = lines[idx]
+
+                if nxt.is_telnet:
+                    break
+                if nxt.is_prompt or nxt.is_gmcp:
+                    break
+
+                # 判断是否续行
+                prev = group[-1]
+                is_cont = False
+
+                # 条件1: 前一行的 ANSI 未平衡
+                if self._has_unbalanced_ansi(prev):
+                    is_cont = True
+                # 条件2: 当前行匹配续行模式
+                elif self._is_continuation_line(nxt):
+                    is_cont = True
+
+                if is_cont:
+                    group.append(nxt)
+                    idx += 1
+                else:
+                    break
+
+            if len(group) > 1:
+                merged = self._merge_line_list(group)
+                result.append(merged)
+            else:
+                result.append(group[0])
+
+        # 跨 chunk 缓冲：末行有未关闭 ANSI 则留给下一 chunk
+        if result:
+            last = result[-1]
+            if (self._has_unbalanced_ansi(last)
+                    and not last.is_prompt
+                    and not last.is_gmcp):
+                self._pending_msg = result.pop()
+
+        return result
 
     @staticmethod
     def _filter_compress(data: bytes) -> bytes:
@@ -448,13 +614,13 @@ def _split_raw_by_ansi(raw: bytes) -> list:
     return segments
 
 
-# 玩家对话模式: "Name: ..." 或 "Name {ghost}: ..." 或 "Name tells you: ..."
+# 玩家对话模式: "Name says:" / "Name tells you:" / "Name asks '...'"
 _DIALOGUE_RE = re.compile(
-    r'(?:says?|tells?(?:\s+you)?|asks?|exclaims?|shouts?|whispers?)[,:]\s',
+    r'(?:says?|tells?(?:\s+you)?|asks?|exclaims?|shouts?|whispers?)'
+    r'(?:[:,]\s|\s\')',
     re.IGNORECASE,
 )
 _DIALOGUE_BRACKET_RE = re.compile(r'\{[^}]*\}[:,]|\([^)]*\)[:,]')
-
 
 def _is_player_dialogue(text: str) -> bool:
     """检测一行文本是否为玩家/NPC 对话"""

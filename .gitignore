@@ -32,3 +32,7 @@ dist/
 
 # Sensitive - keep your real keys out of git!
 # config.yaml is tracked but must have dummy values before commit
+
+# Temporary / debug files
+raw_dump.py
+屏幕截图 *.png
