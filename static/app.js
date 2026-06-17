@@ -17,6 +17,8 @@
   const debugOutput = document.getElementById('debug-output');
   const debugToggle = document.getElementById('debug-toggle');
   const debugClear = document.getElementById('debug-clear');
+  const statusHud = document.getElementById('status-hud');
+  const hudContent = document.getElementById('hud-content');
 
   // State
   let ws = null;
@@ -104,6 +106,10 @@
         if (msg.data) appendPlain(msg.data);
         break;
 
+      case 'prompt':
+        if (msg.data) updateStatusHud(msg.data);
+        break;
+
       case 'error':
         appendPlain('\n[ERROR] ' + msg.data + '\n');
         break;
@@ -133,6 +139,57 @@
     requestAnimationFrame(() => {
       terminalEl.scrollTop = terminalEl.scrollHeight;
     });
+  }
+
+  // ---- Status HUD ----
+
+  function updateStatusHud(promptText) {
+    if (!promptText || !statusHud || !hudContent) return;
+
+    // Parse stats from prompt: "Hp:318/318 Sp:25/25 Ep:183/183 Exp:356 >"
+    var stats = [];
+    var patterns = [
+      { re: /Hp[:\s]*(\d+)\/(\d+)/i, label: 'HP', cls: 'hp' },
+      { re: /Sp[:\s]*(\d+)\/(\d+)/i, label: 'SP', cls: 'sp' },
+      { re: /Ep[:\s]*(\d+)\/(\d+)/i, label: 'EP', cls: 'ep' },
+      { re: /Exp[:\s]*(\d+)/i,   label: 'EXP', cls: 'exp', maxOnly: true },
+      { re: /Tnl[:\s]*(\d+)/i,   label: 'TNL', cls: 'tnl', maxOnly: true },
+    ];
+
+    patterns.forEach(function(p) {
+      var m = promptText.match(p.re);
+      if (m) {
+        var cur = parseInt(m[1], 10);
+        var max = p.maxOnly ? cur : (m[2] ? parseInt(m[2], 10) : cur);
+        stats.push({ label: p.label, cls: p.cls, current: cur, max: max, maxOnly: p.maxOnly });
+      }
+    });
+
+    if (stats.length === 0) {
+      statusHud.classList.remove('visible');
+      return;
+    }
+
+    var html = '';
+    stats.forEach(function(s) {
+      var pct = s.max > 0 ? s.current / s.max : 0;
+      var barCls = s.cls;
+      if (!s.maxOnly && pct <= 0.3) barCls = 'danger';
+      else if (!s.maxOnly && pct <= 0.6) barCls = 'warn';
+
+      html += '<div class="hud-stat">';
+      html += '<span class="hud-label ' + s.cls + '">' + s.label + '</span>';
+      if (s.maxOnly) {
+        html += '<span class="hud-value">' + s.current.toLocaleString() + '</span>';
+      } else {
+        html += '<span class="hud-value">' + s.current + '/' + s.max + '</span>';
+        html += '<div class="hud-bar"><div class="hud-bar-fill ' + barCls + '" style="width:' + (pct * 100).toFixed(0) + '%"></div></div>';
+      }
+      html += '</div>';
+    });
+
+    hudContent.innerHTML = html;
+    statusHud.classList.add('visible');
   }
 
   // ---- Debug Panel ----

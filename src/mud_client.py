@@ -9,6 +9,8 @@ MUD Telnet 客户端
 import asyncio
 import logging
 import re
+import socket as _socket
+import sys
 from typing import Callable, Optional
 
 from .parser import TextParser, ParsedLine, TelnetConstants
@@ -199,10 +201,28 @@ class MudClient:
 
     async def connect(self, host: str, port: int, timeout: float = 15):
         logger.info(f"Connecting to {host}:{port}...")
+        self._host = host
+        self._port = port
         self.reader, self.writer = await asyncio.wait_for(
             asyncio.open_connection(host, port),
             timeout=timeout,
         )
+
+        # Windows ProactorEventLoop: 禁用内核级 socket 接收超时
+        # SO_RCVTIMEO 必须在 socket 被 asyncio 接管后通过 setsockopt 设置
+        # （settimeout 不让用，但底层 setsockopt 可以）
+        # 值不能为 0 (WSAEINVAL)，用 0x7FFFFFFF ms ≈ 24.8 天
+        if sys.platform == 'win32':
+            try:
+                sock = self.writer.get_extra_info('socket')
+                if sock is not None:
+                    sock.setsockopt(
+                        _socket.SOL_SOCKET, _socket.SO_RCVTIMEO,
+                        0x7FFFFFFF,  # 最大 DWORD 值
+                    )
+            except OSError:
+                pass
+
         logger.info("Connected to BatMUD server")
         self._running = True
         task = asyncio.create_task(self._read_loop())
@@ -226,9 +246,27 @@ class MudClient:
         self._tasks.clear()
 
     async def _read_loop(self):
+        """主读取循环
+
+        WinError 121 发生时尝试重连 (setsockopt 在某些 Windows 版本/配置下
+        可能无法完全阻止 SO_RCVTIMEO 触发)。
+        """
         try:
             while self._running and self.reader:
-                data = await self.reader.read(4096)
+                try:
+                    data = await self.reader.read(4096)
+                except OSError as e:
+                    # WinError 121: 信号灯超时 → 尝试重连
+                    if hasattr(e, 'winerror') and e.winerror == 121:
+                        logger.warning(f"Socket timeout (WinError 121), "
+                                       f"attempting reconnect...")
+                        reconnect_ok = await self._try_reconnect()
+                        if reconnect_ok:
+                            continue  # 重连成功，继续读取
+                        logger.error("Reconnect failed, disconnecting")
+                        break
+                    raise
+
                 if not data:
                     logger.info("Server closed connection")
                     break
@@ -262,6 +300,47 @@ class MudClient:
                     await self.on_disconnect()
                 except Exception:
                     pass
+
+    async def _try_reconnect(self) -> bool:
+        """WinError 121 后尝试重新连接到 MUD 服务器"""
+        # 保存连接参数
+        host = self._host
+        port = self._port
+
+        # 关闭旧的 writer/reader
+        if self.writer:
+            try:
+                self.writer.close()
+            except OSError:
+                pass
+        self.reader = None
+        self.writer = None
+
+        for attempt in range(1, 4):
+            logger.info(f"Reconnect attempt {attempt}/3...")
+            try:
+                self.reader, self.writer = await asyncio.wait_for(
+                    asyncio.open_connection(host, port),
+                    timeout=10,
+                )
+                # 重新设置 SO_RCVTIMEO
+                if sys.platform == 'win32':
+                    sock = self.writer.get_extra_info('socket')
+                    if sock is not None:
+                        try:
+                            sock.setsockopt(
+                                _socket.SOL_SOCKET, _socket.SO_RCVTIMEO,
+                                0x7FFFFFFF,
+                            )
+                        except OSError:
+                            pass
+                logger.info("Reconnected successfully")
+                return True
+            except Exception as e:
+                logger.warning(f"Reconnect attempt {attempt} failed: {e}")
+                await asyncio.sleep(2)
+
+        return False
 
     async def _process_line(self, line: ParsedLine):
         raw = line.raw_bytes

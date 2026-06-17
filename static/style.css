@@ -188,6 +188,72 @@ html, body {
   50% { opacity: 0; }
 }
 
+/* ---- 角色状态 HUD ---- */
+#status-hud {
+  display: none;
+  padding: 3px 12px;
+  background: #1e1e2e;
+  border-bottom: 1px solid #2a2a3a;
+  font-size: 12px;
+  flex-shrink: 0;
+  min-height: 24px;
+}
+
+#status-hud.visible {
+  display: block;
+}
+
+#hud-content {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.hud-stat {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.hud-label {
+  font-weight: bold;
+  font-size: 11px;
+}
+
+.hud-label.hp  { color: #44cc44; }
+.hud-label.sp  { color: #5588ff; }
+.hud-label.ep  { color: #ffcc55; }
+.hud-label.exp { color: #cc55ff; }
+.hud-label.tnl { color: #888; }
+
+.hud-value {
+  color: #ccc;
+  font-size: 11px;
+}
+
+.hud-bar {
+  width: 36px;
+  height: 8px;
+  background: #2a2a3a;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.hud-bar-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.3s ease;
+}
+
+.hud-bar-fill.hp  { background: #44cc44; }
+.hud-bar-fill.sp  { background: #5588ff; }
+.hud-bar-fill.ep  { background: #ffcc55; }
+.hud-bar-fill.exp { background: #cc55ff; }
+
+.hud-bar-fill.warn { background: #ffaa00; }
+.hud-bar-fill.danger { background: #ff4444; }
+
 /* ---- 调试面板 ---- */
 #debug-toggle {
   position: fixed;

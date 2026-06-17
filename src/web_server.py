@@ -112,14 +112,23 @@ class GameSession:
                 await self.mud.writer.drain()
 
     async def _on_mud_output(self, html: str, debug: dict = None):
-        """MUD 服务端有数据 → 发送 HTML 到浏览器"""
+        """MUD 服务端有数据 → 发送 HTML/提示到浏览器"""
         if self.ws.closed:
             return
         try:
-            await self.ws.send_json({
-                "type": "html",
-                "data": html,
-            })
+            is_prompt = debug and debug.get('is_prompt')
+            if is_prompt:
+                # Prompt line → send to status HUD, not terminal output
+                prompt_text = debug.get('text', '')
+                await self.ws.send_json({
+                    "type": "prompt",
+                    "data": prompt_text,
+                })
+            else:
+                await self.ws.send_json({
+                    "type": "html",
+                    "data": html,
+                })
             if debug:
                 await self.ws.send_json({
                     "type": "debug",
@@ -201,7 +210,10 @@ class WebServer:
 
         return web.FileResponse(
             path=filepath,
-            headers={"Cache-Control": "no-cache"},
+            headers={
+                "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+                "Pragma": "no-cache",
+            },
         )
 
     async def _handle_websocket(self, request: web.Request) -> web.WebSocketResponse:
